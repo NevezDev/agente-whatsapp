@@ -1,4 +1,5 @@
-fastapi==0.95.2 
-uvicorn==0.22.0 
-twilio==7.18.0 
-python-dotenv==0.20.0 
+twilio
+fastapi
+uvicorn
+python-dotenv
+
