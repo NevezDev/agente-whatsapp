@@ -21,12 +21,14 @@ async def whatsapp_webhook(Body: str = Form(...), From: str = Form(...)):
 
     # Resposta automática
     try:
+        # Enviando resposta para o número de quem enviou a mensagem
         client.messages.create(
             body="Olá! Recebemos sua mensagem. Em breve responderemos.",
-            from_=f"whatsapp:{twilio_number}",
-            to=From
+            from_=twilio_number,  # Número do Twilio, passado pela variável de ambiente
+            to=From  # Número do remetente
         )
     except Exception as e:
         print("Erro ao enviar resposta:", str(e))
+        return JSONResponse(content={"status": f"Erro ao enviar resposta: {str(e)}"}, status_code=400)
 
     return JSONResponse(content={"status": "Mensagem recebida e resposta enviada."})
