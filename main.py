@@ -40,7 +40,7 @@ async def whatsapp_webhook(Body: str = Form(...), From: str = Form(...)):
             # Enviar o menu
             client.messages.create(
                 body=menu_message,
-                from_=f"whatsapp:{twilio_number}",
+                from_=twilio_number,
                 to=From
             )
         except Exception as e:
