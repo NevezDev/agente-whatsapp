@@ -36,7 +36,7 @@ async def whatsapp_webhook(Body: str = Form(...), From: str = Form(...)):
     try:
         message = client.messages.create(
             body=response_message,
-            from_=f"whatsapp:{twilio_number}",
+            from_=twilio_number,
             to=From
         )
     except Exception as e:
