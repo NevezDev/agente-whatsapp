@@ -66,13 +66,14 @@ async def whatsapp_webhook(Body: str = Form(...), From: str = Form(...)):
         return JSONResponse(content={"status": "Lista de produtos enviada."})
 
     # Opção para detalhes do produto
-    elif Body.strip().lower() in produtos:
-        produto = produtos[Body.strip().lower()]
+    elif Body.strip().lower() in [produto.lower() for produto in produtos]:
+        produto_nome = Body.strip().lower()
+        produto = produtos[produto_nome]
         imagem_url = produto["imagem_url"]
         preço = produto["preço"]
         
         detalhes_produto = (
-            f"Produto: {Body.capitalize()}\n"
+            f"Produto: {produto_nome.capitalize()}\n"
             f"Preço: {preço}\n"
             f"Veja o produto na imagem abaixo."
         )
@@ -81,7 +82,7 @@ async def whatsapp_webhook(Body: str = Form(...), From: str = Form(...)):
             # Enviar detalhes do produto
             client.messages.create(
                 body=detalhes_produto,
-                from_=f"whatsapp:{twilio_number}",
+                from_=twilio_number,
                 to=From,
                 media_url=[imagem_url],
             )
@@ -99,7 +100,7 @@ async def whatsapp_webhook(Body: str = Form(...), From: str = Form(...)):
             # Enviar mensagem de suporte
             client.messages.create(
                 body=suporte_message,
-                from_=f"whatsapp:{twilio_number}",
+                from_=twilio_number,
                 to=From
             )
         except Exception as e:
@@ -113,7 +114,7 @@ async def whatsapp_webhook(Body: str = Form(...), From: str = Form(...)):
             # Enviar mensagem de atendimento
             client.messages.create(
                 body=atendente_message,
-                from_=f"whatsapp:{twilio_number}",
+                from_=twilio_number,
                 to=From
             )
         except Exception as e:
@@ -127,7 +128,7 @@ async def whatsapp_webhook(Body: str = Form(...), From: str = Form(...)):
             # Enviar mensagem de erro
             client.messages.create(
                 body=unknown_message,
-                from_=f"whatsapp:{twilio_number}",
+                from_=twilio_number,
                 to=From
             )
         except Exception as e:
