@@ -6,6 +6,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Inicializando o app FastAPI
+app = FastAPI()
+
 # Variáveis de ambiente
 account_sid = os.getenv("TWILIO_ACCOUNT_SID")
 auth_token = os.getenv("TWILIO_AUTH_TOKEN")
@@ -37,7 +40,7 @@ async def whatsapp_webhook(Body: str = Form(...), From: str = Form(...)):
             # Enviar o menu
             client.messages.create(
                 body=menu_message,
-                from_=f"whatsapp:{twilio_number}",
+                from_=twilio_number,
                 to=From
             )
         except Exception as e:
@@ -88,45 +91,4 @@ async def whatsapp_webhook(Body: str = Form(...), From: str = Form(...)):
 
     # Opção para suporte
     if Body.lower() == "3":
-        suporte_message = (
-            "Se você precisar de ajuda, estamos à disposição! Pode perguntar qualquer coisa sobre nossos produtos, "
-            "ou digitar 'Atendente' para conversar com um dos nossos atendentes."
-        )
-        try:
-            # Enviar mensagem de suporte
-            client.messages.create(
-                body=suporte_message,
-                from_=f"whatsapp:{twilio_number}",
-                to=From
-            )
-        except Exception as e:
-            print("Erro ao enviar resposta:", str(e))
-        return JSONResponse(content={"status": "Mensagem de suporte enviada."})
-
-    # Opção para falar com um atendente
-    if Body.lower() == "4":
-        atendente_message = "Você está sendo transferido para um atendente. Aguarde um momento."
-        try:
-            # Enviar mensagem de atendimento
-            client.messages.create(
-                body=atendente_message,
-                from_=twilio_number,
-                to=From
-            )
-        except Exception as e:
-            print("Erro ao enviar resposta:", str(e))
-        return JSONResponse(content={"status": "Transferindo para o atendente."})
-
-    # Caso o usuário digite uma opção desconhecida
-    unknown_message = "Desculpe, não entendi a sua mensagem. Digite 'Menu' para ver as opções disponíveis."
-    try:
-        # Enviar mensagem de erro
-        client.messages.create(
-            body=unknown_message,
-            from_=f"whatsapp:{twilio_number}",
-            to=From
-        )
-    except Exception as e:
-        print("Erro ao enviar resposta:", str(e))
-    
-    return JSONResponse(content={"status": "Mensagem desconhecida."})
+        suporte
