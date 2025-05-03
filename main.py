@@ -1,12 +1,8 @@
 import os
 import httpx
-from fastapi import FastAPI, Request, Form
-from fastapi.responses import PlainTextResponse
-from dotenv import load_dotenv
-
-load_dotenv()
-
-app = FastAPI()
+from fastapi import FastAPI, Request
+from twilio.twiml.messaging_response import MessagingResponse
+from twilio.rest import Client
 
 # Base de dados de produtos
 produtos = [
@@ -19,61 +15,70 @@ produtos = [
     {"nome": "Cajuzinho", "categoria": "Doces", "descricao": "Doce tradicional de amendoim em formato de caju.", "preco": 2.00},
 ]
 
-# Função para montar o prompt com o banco de dados embutido
-def montar_prompt(mensagem_usuario: str) -> str:
-    prompt = (
-        "Você é um atendente virtual de uma loja de doces. "
-        "Aja com simpatia e naturalidade, como um vendedor experiente. "
-        "Com base na seguinte lista de produtos, ajude o cliente a encontrar o que ele deseja:\n\n"
+# Inicialização do FastAPI
+app = FastAPI()
+
+# Função para chamar o GPT-J da Hugging Face
+async def gerar_resposta(prompt: str):
+    url = "https://api-inference.huggingface.co/models/EleutherAI/gpt-neo-2.7B"
+    headers = {
+        "Authorization": f"Bearer {os.getenv('HF_API_KEY')}"
+    }
+    payload = {
+        "inputs": prompt
+    }
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, headers=headers, json=payload)
+    return response.json()
+
+# Função para formatar resposta do chatbot
+def gerar_mensagem_usuario(mensagem: str):
+    return f"O que posso te ajudar com relação aos nossos produtos? Pergunte sobre nossos doces, bolos e tortas! Aqui estão alguns exemplos:\n{mensagem}"
+
+# Função para enviar mensagem pelo Twilio
+def enviar_mensagem_whatsapp(mensagem: str, destinatario: str):
+    account_sid = os.getenv('TWILIO_ACCOUNT_SID')
+    auth_token = os.getenv('TWILIO_AUTH_TOKEN')
+    from_whatsapp = 'whatsapp:+14155238886'  # Número sandbox Twilio
+
+    client = Client(account_sid, auth_token)
+
+    message = client.messages.create(
+        body=mensagem,
+        from_=from_whatsapp,
+        to=f'whatsapp:{destinatario}'
     )
-    categorias = {}
-    for produto in produtos:
-        cat = produto["categoria"]
-        if cat not in categorias:
-            categorias[cat] = []
-        categorias[cat].append(f"- {produto['nome']}: {produto['descricao']} (R${produto['preco']:.2f})")
+    return message.sid
 
-    for categoria, itens in categorias.items():
-        prompt += f"\nCategoria: {categoria}\n" + "\n".join(itens) + "\n"
-
-    prompt += f"\nMensagem do cliente: \"{mensagem_usuario}\"\n"
-    prompt += "Responda como se fosse um atendente real, sugerindo os doces adequados, tirando dúvidas e sendo gentil."
-
-    return prompt
-
-# Rota principal para mensagens do WhatsApp (Twilio)
+# Endpoint que recebe as mensagens do WhatsApp via Twilio
 @app.post("/whatsapp")
 async def whatsapp(request: Request):
-    form = await request.form()
-    mensagem = form.get("Body")
-    numero = form.get("From")
+    form_data = await request.form()
+    mensagem = form_data.get("Body")
+    numero_usuario = form_data.get("From")
 
-    if not mensagem:
-        return PlainTextResponse("Não recebi nenhuma mensagem.")
+    # Verificar se a mensagem contém uma pergunta específica sobre produtos
+    resposta = ""
+    if "preço" in mensagem.lower() or "produto" in mensagem.lower():
+        resposta = gerar_mensagem_usuario(mensagem)
+    else:
+        resposta = "Desculpe, não entendi a sua mensagem. Você pode perguntar sobre nossos produtos ou preços!"
 
-    prompt = montar_prompt(mensagem)
+    # Resposta do chatbot usando GPT-J
+    response = await gerar_resposta(resposta)
 
-    # Chamada para a API da OpenRouter
-    try:
-        response = await httpx.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY')}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": os.getenv("REFERER_URL", "agente-whatsapp-production.up.railway.app"),  # opcional
-                "X-Title": os.getenv("PROJECT_TITLE", "AtendeBot")
-            },
-            json={
-                "model": "openrouter/claude-3-haiku",  # ou outro modelo suportado
-                "messages": [
-                    {"role": "user", "content": prompt}
-                ]
-            },
-            timeout=20
-        )
-        response.raise_for_status()
-        resposta_bot = response.json()["choices"][0]["message"]["content"]
-        return PlainTextResponse(resposta_bot)
+    # Preparando a resposta final para o usuário
+    resposta_chatbot = response[0]['generated_text'] if response else "Desculpe, ocorreu um erro."
 
-    except Exception as e:
-        return PlainTextResponse("Desculpe, ocorreu um erro ao tentar responder. Tente novamente em instantes.")
+    # Enviar a resposta para o WhatsApp via Twilio
+    enviar_mensagem_whatsapp(resposta_chatbot, numero_usuario)
+
+    # Retornar a resposta ao usuário via Twilio
+    resp = MessagingResponse()
+    resp.message(resposta_chatbot)
+    return str(resp)
+
+# Rota para testar localmente ou gerar resposta direta
+@app.get("/testar")
+async def testar():
+    return {"mensagem": "API do chatbot está funcionando!"}
