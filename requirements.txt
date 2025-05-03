@@ -1,6 +1,6 @@
-twilio
 fastapi
 uvicorn
+twilio
+httpx
 python-dotenv
 python-multipart
-openai

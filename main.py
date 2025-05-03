@@ -1,23 +1,22 @@
-# main.py
 import os
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
 from twilio.rest import Client
-import openai
+from fastapi import FastAPI, Request
+from pydantic import BaseModel
+import httpx
 from dotenv import load_dotenv
-
-load_dotenv()
 
 app = FastAPI()
 
-# Configurações
-account_sid = os.getenv("TWILIO_ACCOUNT_SID")
-auth_token = os.getenv("TWILIO_AUTH_TOKEN")
-twilio_number = os.getenv("TWILIO_PHONE_NUMBER")
-openai_api_key = os.getenv("OPENAI_API_KEY")
+# Carregar variáveis de ambiente
+load_dotenv()
 
-client_twilio = Client(account_sid, auth_token)
-openai.api_key = openai_api_key
+# Twilio credentials
+TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
+TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
+TWILIO_WHATSAPP_NUMBER = os.getenv('TWILIO_WHATSAPP_NUMBER')
+OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
+
+client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
 # Base de dados de produtos
 produtos = [
@@ -30,58 +29,56 @@ produtos = [
     {"nome": "Cajuzinho", "categoria": "Doces", "descricao": "Doce tradicional de amendoim em formato de caju.", "preco": 2.00},
 ]
 
-# Função para buscar produto
-def buscar_produto(nome_produto):
-    for produto in produtos:
-        if nome_produto.lower() in produto["nome"].lower():
-            return produto
-    return None
+# Modelo de pedido do usuário
+class ChatRequest(BaseModel):
+    message: str
+    from_number: str
 
-# Função para gerar resposta com ChatGPT
-def gerar_resposta_chatgpt(mensagem_usuario):
-    prompt = f"""
-Você é um atendente de uma loja de doces chamada AtendeBot.
+@app.post("/whatsapp")
+async def whatsapp(request: Request):
+    data = await request.json()
+    from_number = data['From']
+    user_msg = data['Body'].strip()
 
-Produtos disponíveis:
-{formatar_produtos_para_prompt()}
+    # Resposta sobre produtos
+    if "produtos" in user_msg.lower() or "doces" in user_msg.lower() or "bolos" in user_msg.lower():
+        categorias = set([produto["categoria"] for produto in produtos])
+        response = "Temos os seguintes produtos por categoria:\n"
+        
+        for categoria in categorias:
+            response += f"\nCategoria: {categoria}\n"
+            for produto in produtos:
+                if produto["categoria"] == categoria:
+                    response += f"- {produto['nome']} (R${produto['preco']}) - {produto['descricao']}\n"
+        return await send_whatsapp_message(from_number, response)
 
-Quando o cliente perguntar sobre produtos ou fazer perguntas, responda de forma natural e amigável.
-Se ele pedir algum doce específico, dê uma pequena descrição e preço.
+    # Usando OpenRouter para resposta natural
+    bot_reply = await ask_openrouter(user_msg)
+    return await send_whatsapp_message(from_number, bot_reply)
 
-Mensagem do cliente: {mensagem_usuario}
-"""
-    resposta = openai.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=[
-            {"role": "system", "content": "Você é um assistente de vendas de uma loja de doces."},
-            {"role": "user", "content": prompt}
-        ]
+
+async def send_whatsapp_message(to_number: str, body: str):
+    message = client.messages.create(
+        body=body,
+        from_=f"whatsapp:{TWILIO_WHATSAPP_NUMBER}",
+        to=f"whatsapp:{to_number}"
     )
-    return resposta.choices[0].message.content.strip()
+    return {"message_sid": message.sid}
 
-def formatar_produtos_para_prompt():
-    texto = ""
-    for p in produtos:
-        texto += f"- {p['nome']} ({p['categoria']}): {p['descricao']} - R${p['preco']:.2f}\n"
-    return texto
+# Função para comunicação com OpenRouter
+async def ask_openrouter(prompt: str) -> str:
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+    }
 
-# Rota principal
-@app.post("/whatsapp/")
-async def whatsapp_webhook(request: Request):
-    data = await request.form()
-    mensagem_usuario = data.get("Body")
-    From = data.get("From")
+    body = {
+        "model": "openai/gpt-3.5-turbo",
+        "messages": [{"role": "user", "content": prompt}]
+    }
 
-    if not mensagem_usuario:
-        return JSONResponse(content={"status": "Mensagem vazia."})
-
-    resposta = gerar_resposta_chatgpt(mensagem_usuario)
-
-    # Enviar a resposta via WhatsApp
-    client_twilio.messages.create(
-        body=resposta,
-        from_=twilio_number,
-        to=From
-    )
-
-    return JSONResponse(content={"status": "Mensagem enviada!"})
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, json=body, headers=headers)
+        data = response.json()
+        return data["choices"][0]["message"]["content"]
