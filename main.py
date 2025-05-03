@@ -60,7 +60,7 @@ async def whatsapp(request: Request):
             headers={
                 "Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY')}",
                 "Content-Type": "application/json",
-                "HTTP-Referer": os.getenv("REFERER_URL", "https://seusite.com"),  # opcional
+                "HTTP-Referer": os.getenv("REFERER_URL", "agente-whatsapp-production.up.railway.app"),  # opcional
                 "X-Title": os.getenv("PROJECT_TITLE", "AtendeBot")
             },
             json={
