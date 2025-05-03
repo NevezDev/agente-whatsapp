@@ -14,7 +14,7 @@ TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
 
 # Configuração do Hugging Face (ou outra IA que você esteja usando)
 HUGGINGFACE_API_KEY = os.getenv('HUGGINGFACE_API_KEY')
-HUGGINGFACE_API_URL = "https://api-inference.huggingface.co/models/gpt-j"
+HUGGINGFACE_API_URL = "https://api-inference.huggingface.co/models/gpt2"  # Usando o GPT-2
 
 app = FastAPI()
 
@@ -22,8 +22,8 @@ app = FastAPI()
 async def whatsapp(request: Request):
     # Recebendo dados do WhatsApp via Twilio
     form_data = await request.form()
-    message_body = form_data.get("Body")
-    from_number = form_data.get("From")
+    message_body = form_data.get("Body")  # Texto enviado pelo usuário
+    from_number = form_data.get("From")  # Número do remetente (para log ou envio de mensagens específicas)
 
     # Fazendo requisição para a IA para gerar resposta
     async with httpx.AsyncClient() as client:
@@ -38,7 +38,7 @@ async def whatsapp(request: Request):
 
         try:
             response = await client.post(HUGGINGFACE_API_URL, json=data, headers=headers)
-            response.raise_for_status()
+            response.raise_for_status()  # Lança exceção se o código de status HTTP não for 2xx
 
             # Verificando a estrutura da resposta e acessando corretamente
             if isinstance(response.json(), list) and response.json():
@@ -57,7 +57,7 @@ async def whatsapp(request: Request):
 
     # Enviar a resposta de volta via Twilio
     resp = MessagingResponse()
-    resp.message(resposta_chatbot)
+    resp.message(resposta_chatbot)  # Mensagem para o WhatsApp
     return str(resp)
 
 if __name__ == "__main__":
