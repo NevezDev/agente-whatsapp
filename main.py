@@ -1,22 +1,12 @@
 import os
-from twilio.rest import Client
-from fastapi import FastAPI, Request
-from pydantic import BaseModel
 import httpx
+from fastapi import FastAPI, Request, Form
+from fastapi.responses import PlainTextResponse
 from dotenv import load_dotenv
 
-app = FastAPI()
-
-# Carregar variáveis de ambiente
 load_dotenv()
 
-# Twilio credentials
-TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
-TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
-TWILIO_WHATSAPP_NUMBER = os.getenv('TWILIO_WHATSAPP_NUMBER')
-OPENROUTER_API_KEY = os.getenv('OPENROUTER_API_KEY')
-
-client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+app = FastAPI()
 
 # Base de dados de produtos
 produtos = [
@@ -29,56 +19,61 @@ produtos = [
     {"nome": "Cajuzinho", "categoria": "Doces", "descricao": "Doce tradicional de amendoim em formato de caju.", "preco": 2.00},
 ]
 
-# Modelo de pedido do usuário
-class ChatRequest(BaseModel):
-    message: str
-    from_number: str
+# Função para montar o prompt com o banco de dados embutido
+def montar_prompt(mensagem_usuario: str) -> str:
+    prompt = (
+        "Você é um atendente virtual de uma loja de doces. "
+        "Aja com simpatia e naturalidade, como um vendedor experiente. "
+        "Com base na seguinte lista de produtos, ajude o cliente a encontrar o que ele deseja:\n\n"
+    )
+    categorias = {}
+    for produto in produtos:
+        cat = produto["categoria"]
+        if cat not in categorias:
+            categorias[cat] = []
+        categorias[cat].append(f"- {produto['nome']}: {produto['descricao']} (R${produto['preco']:.2f})")
 
+    for categoria, itens in categorias.items():
+        prompt += f"\nCategoria: {categoria}\n" + "\n".join(itens) + "\n"
+
+    prompt += f"\nMensagem do cliente: \"{mensagem_usuario}\"\n"
+    prompt += "Responda como se fosse um atendente real, sugerindo os doces adequados, tirando dúvidas e sendo gentil."
+
+    return prompt
+
+# Rota principal para mensagens do WhatsApp (Twilio)
 @app.post("/whatsapp")
 async def whatsapp(request: Request):
-    data = await request.json()
-    from_number = data['From']
-    user_msg = data['Body'].strip()
+    form = await request.form()
+    mensagem = form.get("Body")
+    numero = form.get("From")
 
-    # Resposta sobre produtos
-    if "produtos" in user_msg.lower() or "doces" in user_msg.lower() or "bolos" in user_msg.lower():
-        categorias = set([produto["categoria"] for produto in produtos])
-        response = "Temos os seguintes produtos por categoria:\n"
-        
-        for categoria in categorias:
-            response += f"\nCategoria: {categoria}\n"
-            for produto in produtos:
-                if produto["categoria"] == categoria:
-                    response += f"- {produto['nome']} (R${produto['preco']}) - {produto['descricao']}\n"
-        return await send_whatsapp_message(from_number, response)
+    if not mensagem:
+        return PlainTextResponse("Não recebi nenhuma mensagem.")
 
-    # Usando OpenRouter para resposta natural
-    bot_reply = await ask_openrouter(user_msg)
-    return await send_whatsapp_message(from_number, bot_reply)
+    prompt = montar_prompt(mensagem)
 
+    # Chamada para a API da OpenRouter
+    try:
+        response = await httpx.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {os.getenv('OPENROUTER_API_KEY')}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": os.getenv("REFERER_URL", "https://seusite.com"),  # opcional
+                "X-Title": os.getenv("PROJECT_TITLE", "AtendeBot")
+            },
+            json={
+                "model": "openrouter/claude-3-haiku",  # ou outro modelo suportado
+                "messages": [
+                    {"role": "user", "content": prompt}
+                ]
+            },
+            timeout=20
+        )
+        response.raise_for_status()
+        resposta_bot = response.json()["choices"][0]["message"]["content"]
+        return PlainTextResponse(resposta_bot)
 
-async def send_whatsapp_message(to_number: str, body: str):
-    message = client.messages.create(
-        body=body,
-        from_=f"whatsapp:{TWILIO_WHATSAPP_NUMBER}",
-        to=f"whatsapp:{to_number}"
-    )
-    return {"message_sid": message.sid}
-
-# Função para comunicação com OpenRouter
-async def ask_openrouter(prompt: str) -> str:
-    url = "https://openrouter.ai/api/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json",
-    }
-
-    body = {
-        "model": "openai/gpt-3.5-turbo",
-        "messages": [{"role": "user", "content": prompt}]
-    }
-
-    async with httpx.AsyncClient() as client:
-        response = await client.post(url, json=body, headers=headers)
-        data = response.json()
-        return data["choices"][0]["message"]["content"]
+    except Exception as e:
+        return PlainTextResponse("Desculpe, ocorreu um erro ao tentar responder. Tente novamente em instantes.")
