@@ -13,7 +13,7 @@ TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
 TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
 
 # Configuração do DeepSeek (substitua com seu endpoint do DeepSeek se necessário)
-DEEPSEEK_API_URL = "http://seu-endpoint-deepseek"  # Substitua pelo endpoint real
+DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions" # Substitua pelo endpoint real
 DEEPSEEK_API_KEY = os.getenv('DEEPSEEK_API_KEY')
 
 # Banco de dados de doces integrado no código
