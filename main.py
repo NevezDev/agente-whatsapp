@@ -1,84 +1,65 @@
 import os
-import httpx
 from fastapi import FastAPI, Request
 from twilio.twiml.messaging_response import MessagingResponse
-from twilio.rest import Client
+from dotenv import load_dotenv
+import httpx
 
-# Base de dados de produtos
-produtos = [
-    {"nome": "Bolo de Chocolate", "categoria": "Bolos", "descricao": "Delicioso bolo de chocolate com cobertura cremosa.", "preco": 25.00},
-    {"nome": "Brigadeiro Gourmet", "categoria": "Doces", "descricao": "Brigadeiros gourmet feitos com chocolate belga.", "preco": 2.50},
-    {"nome": "Cupcake de Morango", "categoria": "Bolos", "descricao": "Cupcakes fofinhos com cobertura de morango natural.", "preco": 5.00},
-    {"nome": "Beijinho", "categoria": "Doces", "descricao": "Tradicional beijinho de coco.", "preco": 2.00},
-    {"nome": "Torta de Limão", "categoria": "Tortas", "descricao": "Torta de limão com base crocante e recheio cremoso.", "preco": 30.00},
-    {"nome": "Bolo de Cenoura", "categoria": "Bolos", "descricao": "Bolo de cenoura com cobertura de chocolate.", "preco": 20.00},
-    {"nome": "Cajuzinho", "categoria": "Doces", "descricao": "Doce tradicional de amendoim em formato de caju.", "preco": 2.00},
-]
+# Carregar variáveis de ambiente
+load_dotenv()
 
-# Inicialização do FastAPI
+# Configuração do Twilio
+TWILIO_PHONE_NUMBER = os.getenv('TWILIO_PHONE_NUMBER')
+TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
+TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
+
+# Configuração do Hugging Face (ou outra IA que você esteja usando)
+HUGGINGFACE_API_KEY = os.getenv('HUGGINGFACE_API_KEY')
+HUGGINGFACE_API_URL = "https://api-inference.huggingface.co/models/gpt-j"
+
 app = FastAPI()
 
-# Função para chamar o GPT-J da Hugging Face
-async def gerar_resposta(prompt: str):
-    url = "https://api-inference.huggingface.co/models/EleutherAI/gpt-neo-2.7B"
-    headers = {
-        "Authorization": f"Bearer {os.getenv('HF_API_KEY')}"
-    }
-    payload = {
-        "inputs": prompt
-    }
-    async with httpx.AsyncClient() as client:
-        response = await client.post(url, headers=headers, json=payload)
-    return response.json()
-
-# Função para formatar resposta do chatbot
-def gerar_mensagem_usuario(mensagem: str):
-    return f"O que posso te ajudar com relação aos nossos produtos? Pergunte sobre nossos doces, bolos e tortas! Aqui estão alguns exemplos:\n{mensagem}"
-
-# Função para enviar mensagem pelo Twilio
-def enviar_mensagem_whatsapp(mensagem: str, destinatario: str):
-    account_sid = os.getenv('TWILIO_ACCOUNT_SID')
-    auth_token = os.getenv('TWILIO_AUTH_TOKEN')
-    from_whatsapp = 'whatsapp:+14155238886'  # Número sandbox Twilio
-
-    client = Client(account_sid, auth_token)
-
-    message = client.messages.create(
-        body=mensagem,
-        from_=from_whatsapp,
-        to=f'whatsapp:{destinatario}'
-    )
-    return message.sid
-
-# Endpoint que recebe as mensagens do WhatsApp via Twilio
 @app.post("/whatsapp")
 async def whatsapp(request: Request):
+    # Recebendo dados do WhatsApp via Twilio
     form_data = await request.form()
-    mensagem = form_data.get("Body")
-    numero_usuario = form_data.get("From")
+    message_body = form_data.get("Body")
+    from_number = form_data.get("From")
 
-    # Verificar se a mensagem contém uma pergunta específica sobre produtos
-    resposta = ""
-    if "preço" in mensagem.lower() or "produto" in mensagem.lower():
-        resposta = gerar_mensagem_usuario(mensagem)
-    else:
-        resposta = "Desculpe, não entendi a sua mensagem. Você pode perguntar sobre nossos produtos ou preços!"
+    # Fazendo requisição para a IA para gerar resposta
+    async with httpx.AsyncClient() as client:
+        # Body para a requisição
+        data = {
+            "inputs": message_body,
+        }
 
-    # Resposta do chatbot usando GPT-J
-    response = await gerar_resposta(resposta)
+        headers = {
+            "Authorization": f"Bearer {HUGGINGFACE_API_KEY}",
+        }
 
-    # Preparando a resposta final para o usuário
-    resposta_chatbot = response[0]['generated_text'] if response else "Desculpe, ocorreu um erro."
+        try:
+            response = await client.post(HUGGINGFACE_API_URL, json=data, headers=headers)
+            response.raise_for_status()
 
-    # Enviar a resposta para o WhatsApp via Twilio
-    enviar_mensagem_whatsapp(resposta_chatbot, numero_usuario)
+            # Verificando a estrutura da resposta e acessando corretamente
+            if isinstance(response.json(), list) and response.json():
+                resposta_chatbot = response.json()[0].get('generated_text', "Desculpe, ocorreu um erro.")
+            elif isinstance(response.json(), dict):
+                resposta_chatbot = response.json().get('generated_text', "Desculpe, ocorreu um erro.")
+            else:
+                resposta_chatbot = "Desculpe, ocorreu um erro."
 
-    # Retornar a resposta ao usuário via Twilio
+        except httpx.HTTPStatusError as e:
+            resposta_chatbot = "Erro ao se comunicar com a API."
+            print(f"Erro HTTP: {e}")
+        except Exception as e:
+            resposta_chatbot = "Erro desconhecido."
+            print(f"Erro desconhecido: {e}")
+
+    # Enviar a resposta de volta via Twilio
     resp = MessagingResponse()
     resp.message(resposta_chatbot)
     return str(resp)
 
-# Rota para testar localmente ou gerar resposta direta
-@app.get("/testar")
-async def testar():
-    return {"mensagem": "API do chatbot está funcionando!"}
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
