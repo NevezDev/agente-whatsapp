@@ -1,68 +1,65 @@
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
-import requests
-import os
-from data import products
 from twilio.rest import Client
+from twilio.twiml.messaging_response import MessagingResponse
+import os
+import requests
+from data import produtos
 
 app = FastAPI()
 
-# Variáveis do Twilio
-twilio_client = Client(os.getenv("TWILIO_ACCOUNT_SID"), os.getenv("TWILIO_AUTH_TOKEN"))
-twilio_number = os.getenv("TWILIO_PHONE_NUMBER")
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
-# Defina a chave da API do Hugging Face
-HF_API_KEY = os.getenv("HF_API_KEY")
-API_URL = "https://api-inference.huggingface.co/models/microsoft/DialoGPT-medium"
-headers = {"Authorization": f"Bearer {HF_API_KEY}"}
+twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
-class WhatsAppMessage(BaseModel):
-    From: str
-    Body: str
+def gerar_catalogo():
+    catalogo = ""
+    for p in produtos:
+        catalogo += f"{p['nome']} - R${p['preco']:.2f}\n{p['descricao']}\n\n"
+    return catalogo.strip()
 
-def format_products():
-    return "\n".join([f"{p['nome']} - R${{p['preco']:.2f}}\n{{p['descricao']}}" for p in products])
-
-def build_prompt(user_message):
-    catalog = format_products()
+def gerar_prompt(mensagem_cliente):
+    catalogo = gerar_catalogo()
     return (
         f"Você é o AtendeBot, um atendente simpático de uma loja de doces. "
-        f"Seu objetivo é ajudar os clientes a escolherem produtos e responder dúvidas com simpatia.\n"
-        f"Catálogo:\n{catalog}\n\n"
-        f"Mensagem do cliente: {user_message}\n"
+        f"Seu objetivo é ajudar os clientes a escolherem produtos e responder dúvidas com simpatia.\n\n"
+        f"Catálogo:\n{catalogo}\n\n"
+        f"Mensagem do cliente: {mensagem_cliente}\n"
         f"Responda de forma natural e útil."
     )
 
-def query_hugging_face(prompt):
-    # Enviar a mensagem para a API do Hugging Face
-    response = requests.post(API_URL, headers=headers, json={"inputs": prompt})
-    
+def enviar_pergunta_openrouter(mensagem):
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    body = {
+        "model": "openchat/openchat-3.5",
+        "messages": [
+            {"role": "user", "content": mensagem}
+        ]
+    }
+
+    response = requests.post(url, json=body, headers=headers)
     if response.status_code == 200:
-        return response.json()[0]['generated_text']
+        return response.json()["choices"][0]["message"]["content"]
     else:
-        return "Desculpe, ocorreu um erro ao processar sua solicitação."
+        raise Exception(f"Erro ao acessar OpenRouter: {response.status_code} - {response.text}")
 
 @app.post("/whatsapp")
-async def webhook(msg: Request):
-    form = await msg.form()
-    body = form.get("Body")
-    sender = form.get("From")
-
-    prompt = build_prompt(body)
+async def responder_mensagem(request: Request):
+    form = await request.form()
+    mensagem = form.get("Body")
+    numero = form.get("From")
 
     try:
-        # Consultar o Hugging Face para obter a resposta
-        reply = query_hugging_face(prompt)
-
-        # Enviar a resposta via Twilio
-        twilio_client.messages.create(
-            body=reply,
-            from_=f"whatsapp:{twilio_number}",
-            to=sender
-        )
-
-        return JSONResponse(content={"status": "mensagem enviada"}, status_code=200)
-
+        prompt = gerar_prompt(mensagem)
+        resposta = enviar_pergunta_openrouter(prompt)
     except Exception as e:
-        return JSONResponse(content={"erro": str(e)}, status_code=500)
+        resposta = f"Erro ao processar: {e}"
+
+    twiml = MessagingResponse()
+    twiml.message(resposta)
+    return str(twiml)
