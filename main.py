@@ -1,17 +1,21 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-import openai
+import requests
 import os
 from data import products
 from twilio.rest import Client
 
 app = FastAPI()
 
-openai.api_key = os.getenv("OPENAI_API_KEY")
-
+# Variáveis do Twilio
 twilio_client = Client(os.getenv("TWILIO_ACCOUNT_SID"), os.getenv("TWILIO_AUTH_TOKEN"))
 twilio_number = os.getenv("TWILIO_PHONE_NUMBER")
+
+# Defina a chave da API do Hugging Face
+HF_API_KEY = os.getenv("HF_API_KEY")
+API_URL = "https://api-inference.huggingface.co/models/microsoft/DialoGPT-medium"
+headers = {"Authorization": f"Bearer {HF_API_KEY}"}
 
 class WhatsAppMessage(BaseModel):
     From: str
@@ -25,10 +29,19 @@ def build_prompt(user_message):
     return (
         f"Você é o AtendeBot, um atendente simpático de uma loja de doces. "
         f"Seu objetivo é ajudar os clientes a escolherem produtos e responder dúvidas com simpatia.\n"
-        f"Catálogo:\n{{catalog}}\n\n"
-        f"Mensagem do cliente: {{user_message}}\n"
+        f"Catálogo:\n{catalog}\n\n"
+        f"Mensagem do cliente: {user_message}\n"
         f"Responda de forma natural e útil."
     )
+
+def query_hugging_face(prompt):
+    # Enviar a mensagem para a API do Hugging Face
+    response = requests.post(API_URL, headers=headers, json={"inputs": prompt})
+    
+    if response.status_code == 200:
+        return response.json()[0]['generated_text']
+    else:
+        return "Desculpe, ocorreu um erro ao processar sua solicitação."
 
 @app.post("/webhook")
 async def webhook(msg: Request):
@@ -39,19 +52,13 @@ async def webhook(msg: Request):
     prompt = build_prompt(body)
 
     try:
-        response = openai.ChatCompletion.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "Você é um atendente de uma loja de doces, chamado AtendeBot."},
-                {"role": "user", "content": prompt}
-            ]
-        )
+        # Consultar o Hugging Face para obter a resposta
+        reply = query_hugging_face(prompt)
 
-        reply = response["choices"][0]["message"]["content"]
-
+        # Enviar a resposta via Twilio
         twilio_client.messages.create(
             body=reply,
-            from_=f"whatsapp:{{twilio_number}}",
+            from_=f"whatsapp:{twilio_number}",
             to=sender
         )
 
