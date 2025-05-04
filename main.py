@@ -1,66 +1,61 @@
-import os
 from fastapi import FastAPI, Request
-from twilio.twiml.messaging_response import MessagingResponse
-from dotenv import load_dotenv
-import httpx
-
-# Carrega variáveis do .env
-load_dotenv()
-
-DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
-DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+import openai
+import os
+from data import products
+from twilio.rest import Client
 
 app = FastAPI()
 
-# Banco de dados de doces
-doces = [
-    {"nome": "Beijinho", "categoria": "doces", "descricao": "Docinho de coco com leite condensado", "preco": 1.50},
-    {"nome": "Brigadeiro", "categoria": "doces", "descricao": "Clássico de chocolate com granulado", "preco": 1.50},
-    {"nome": "Bolo de chocolate", "categoria": "bolos", "descricao": "Bolo de chocolate com cobertura cremosa", "preco": 20.00},
-    {"nome": "Mousse de maracujá", "categoria": "mousses", "descricao": "Sobremesa leve e refrescante", "preco": 5.00}
-]
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
-def formatar_cardapio():
-    texto = "🍬 *Nosso Cardápio* 🍬\n\n"
-    for item in doces:
-        texto += f"*{item['nome']}* ({item['categoria']}) - R${item['preco']:.2f}\n  _{item['descricao']}_\n\n"
-    return texto.strip()
+twilio_client = Client(os.getenv("TWILIO_ACCOUNT_SID"), os.getenv("TWILIO_AUTH_TOKEN"))
+twilio_number = os.getenv("TWILIO_PHONE_NUMBER")
 
-@app.post("/whatsapp")
-async def whatsapp(request: Request):
-    form_data = await request.form()
-    message_body = form_data.get("Body")
-    from_number = form_data.get("From")
+class WhatsAppMessage(BaseModel):
+    From: str
+    Body: str
 
-    # Verifica se o usuário pediu o cardápio
-    if message_body.lower() in ["cardápio", "menu", "lista", "doces", "bolos"]:
-        resposta = formatar_cardapio()
-    else:
-        # Integração com DeepSeek
-        headers = {
-            "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
-            "Content-Type": "application/json"
-        }
+def format_products():
+    return "\n".join([f"{p['nome']} - R${{p['preco']:.2f}}\n{{p['descricao']}}" for p in products])
 
-        prompt = f"Responda como se fosse um atendente simpático de uma loja de doces. Use o seguinte cardápio: {formatar_cardapio()}"
+def build_prompt(user_message):
+    catalog = format_products()
+    return (
+        f"Você é o AtendeBot, um atendente simpático de uma loja de doces. "
+        f"Seu objetivo é ajudar os clientes a escolherem produtos e responder dúvidas com simpatia.\n"
+        f"Catálogo:\n{{catalog}}\n\n"
+        f"Mensagem do cliente: {{user_message}}\n"
+        f"Responda de forma natural e útil."
+    )
 
-        data = {
-            "model": "deepseek-chat",
-            "messages": [
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": message_body}
+@app.post("/webhook")
+async def webhook(msg: Request):
+    form = await msg.form()
+    body = form.get("Body")
+    sender = form.get("From")
+
+    prompt = build_prompt(body)
+
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": "Você é um atendente de uma loja de doces, chamado AtendeBot."},
+                {"role": "user", "content": prompt}
             ]
-        }
+        )
 
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(DEEPSEEK_API_URL, json=data, headers=headers)
-                response.raise_for_status()
-                resposta = response.json()["choices"][0]["message"]["content"]
-        except Exception as e:
-            print("Erro:", e)
-            resposta = "Desculpe, não consegui responder agora. Tente novamente em instantes."
+        reply = response["choices"][0]["message"]["content"]
 
-    twilio_response = MessagingResponse()
-    twilio_response.message(resposta)
-    return str(twilio_response)
+        twilio_client.messages.create(
+            body=reply,
+            from_=f"whatsapp:{{twilio_number}}",
+            to=sender
+        )
+
+        return JSONResponse(content={"status": "mensagem enviada"}, status_code=200)
+
+    except Exception as e:
+        return JSONResponse(content={"erro": str(e)}, status_code=500)
