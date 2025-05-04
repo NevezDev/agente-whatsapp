@@ -43,7 +43,7 @@ def query_hugging_face(prompt):
     else:
         return "Desculpe, ocorreu um erro ao processar sua solicitação."
 
-@app.post("/webhook")
+@app.post("/whatsapp")
 async def webhook(msg: Request):
     form = await msg.form()
     body = form.get("Body")
