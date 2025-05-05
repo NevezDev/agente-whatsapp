@@ -5,6 +5,7 @@ import os
 import requests
 from data import produtos
 from dotenv import load_dotenv
+import uuid
 
 load_dotenv()
 
@@ -16,6 +17,9 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 MERCADO_PAGO_ACCESS_TOKEN = os.getenv("MERCADO_PAGO_ACCESS_TOKEN")
 
 twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+
+# Dicionário para guardar pagamentos pendentes
+pagamentos_pendentes = {}
 
 def gerar_catalogo():
     catalogo = ""
@@ -53,26 +57,23 @@ def enviar_pergunta_openrouter(mensagem):
     else:
         raise Exception(f"Erro ao acessar OpenRouter: {response.status_code} - {response.text}")
 
-import uuid
-
 def gerar_pagamento_pix(nome_produto: str, valor: float):
     url = "https://api.mercadopago.com/v1/payments"
     
-    # Gerar um UUID único para a chave de idempotência
-    idempotency_key = str(uuid.uuid4())  # Gera um valor único para a chave
-    
+    idempotency_key = str(uuid.uuid4())
+
     headers = {
         "Authorization": f"Bearer {MERCADO_PAGO_ACCESS_TOKEN}",
         "Content-Type": "application/json",
-        "X-Idempotency-Key": idempotency_key  # Passando o UUID como chave
+        "X-Idempotency-Key": idempotency_key
     }
-    
+
     body = {
         "transaction_amount": valor,
         "description": f"Compra de {nome_produto}",
         "payment_method_id": "pix",
         "payer": {
-            "email": "comprador@email.com"  # Pode ser genérico, obrigatório
+            "email": "comprador@email.com"
         }
     }
 
@@ -80,12 +81,11 @@ def gerar_pagamento_pix(nome_produto: str, valor: float):
     if response.status_code == 201:
         data = response.json()
         return {
-            "link": data["point_of_interaction"]["transaction_data"]["ticket_url"],
-            "qr_code": data["point_of_interaction"]["transaction_data"]["qr_code_base64"]
+            "id": data["id"],
+            "link": data["point_of_interaction"]["transaction_data"]["ticket_url"]
         }
     else:
         raise Exception(f"Erro ao gerar pagamento: {response.status_code} - {response.text}")
-
 
 @app.post("/whatsapp")
 async def responder_mensagem(request: Request):
@@ -98,6 +98,9 @@ async def responder_mensagem(request: Request):
             for produto in produtos:
                 if produto["nome"].lower() in mensagem:
                     pagamento = gerar_pagamento_pix(produto["nome"], produto["preco"])
+                    payment_id = str(pagamento["id"])
+                    pagamentos_pendentes[payment_id] = numero
+
                     resposta = (
                         f"✅ Pagamento gerado para *{produto['nome']}* no valor de R${produto['preco']:.2f}.\n\n"
                         f"Acesse o link para pagar via Pix:\n{pagamento['link']}"
@@ -126,3 +129,31 @@ async def responder_mensagem(request: Request):
     twiml = MessagingResponse()
     twiml.message("Processando sua mensagem...")
     return str(twiml)
+
+@app.post("/webhook")
+async def webhook_mp(request: Request):
+    body = await request.json()
+    tipo_evento = body.get("action")
+    dados = body.get("data", {})
+    payment_id = str(dados.get("id"))
+
+    if tipo_evento == "payment.updated":
+        mp_url = f"https://api.mercadopago.com/v1/payments/{payment_id}"
+        headers = {
+            "Authorization": f"Bearer {MERCADO_PAGO_ACCESS_TOKEN}"
+        }
+        resposta = requests.get(mp_url, headers=headers)
+
+        if resposta.status_code == 200:
+            pagamento = resposta.json()
+            status = pagamento.get("status")
+
+            if status == "approved" and payment_id in pagamentos_pendentes:
+                numero = pagamentos_pendentes.pop(payment_id)
+                twilio_client.messages.create(
+                    body="🎉 Pagamento confirmado! Seu pedido está sendo preparado com carinho. Obrigado! 🍬",
+                    from_="whatsapp:+14155238886",
+                    to=numero
+                )
+
+    return {"status": "ok"}
