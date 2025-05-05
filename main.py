@@ -60,20 +60,24 @@ def enviar_pergunta_openrouter(mensagem):
 def gerar_pagamento_pix(nome_produto: str, valor: float):
     url = "https://api.mercadopago.com/v1/payments"
     
-    idempotency_key = str(uuid.uuid4())
-
+    # Gerar um UUID único para a chave de idempotência
+    idempotency_key = str(uuid.uuid4())  # Gera um valor único para a chave
+    
     headers = {
         "Authorization": f"Bearer {MERCADO_PAGO_ACCESS_TOKEN}",
         "Content-Type": "application/json",
-        "X-Idempotency-Key": idempotency_key
+        "X-Idempotency-Key": idempotency_key  # Passando o UUID como chave
     }
-
+    
     body = {
         "transaction_amount": valor,
         "description": f"Compra de {nome_produto}",
         "payment_method_id": "pix",
         "payer": {
-            "email": "comprador@email.com"
+            "email": "comprador@email.com"  # Pode ser genérico, obrigatório
+        },
+        "additional_info": {
+            "payer_email": "comprador@email.com"
         }
     }
 
@@ -81,11 +85,11 @@ def gerar_pagamento_pix(nome_produto: str, valor: float):
     if response.status_code == 201:
         data = response.json()
         return {
-            "id": data["id"],
-            "link": data["point_of_interaction"]["transaction_data"]["ticket_url"]
+            "link": data["point_of_interaction"]["transaction_data"]["ticket_url"],  # Link do pagamento
         }
     else:
         raise Exception(f"Erro ao gerar pagamento: {response.status_code} - {response.text}")
+
 
 @app.post("/whatsapp")
 async def responder_mensagem(request: Request):
