@@ -111,6 +111,7 @@ async def responder_mensagem(request: Request):
             prompt = gerar_prompt(mensagem)
             resposta = enviar_pergunta_openrouter(prompt)
 
+        # Tenta enviar pelo WhatsApp
         twilio_client.messages.create(
             body=resposta,
             from_="whatsapp:+14155238886",
@@ -119,6 +120,7 @@ async def responder_mensagem(request: Request):
 
     except Exception as e:
         erro = f"Erro ao processar: {e}"
+        # Tenta enviar pelo WhatsApp em caso de erro
         twilio_client.messages.create(
             body=erro,
             from_="whatsapp:+14155238886",
@@ -149,10 +151,28 @@ async def webhook_mp(request: Request):
 
             if status == "approved" and payment_id in pagamentos_pendentes:
                 numero = pagamentos_pendentes.pop(payment_id)
-                twilio_client.messages.create(
-                    body="🎉 Pagamento confirmado! Seu pedido está sendo preparado com carinho. Obrigado! 🍬",
-                    from_="whatsapp:+14155238886",
-                    to=numero
-                )
+                mensagem_confirmacao = "🎉 Pagamento confirmado! Seu pedido está sendo preparado com carinho. Obrigado! 🍬"
+
+                try:
+                    # Tenta enviar pelo WhatsApp
+                    twilio_client.messages.create(
+                        body=mensagem_confirmacao,
+                        from_="whatsapp:+14155238886",
+                        to=numero
+                    )
+                except Exception as e:
+                    print(f"Erro ao enviar via WhatsApp: {e}")
+                    # Converte para número de telefone puro (sem 'whatsapp:')
+                    numero_sms = numero.replace("whatsapp:", "")
+                    try:
+                        # Envia via SMS como fallback
+                        twilio_client.messages.create(
+                            body=mensagem_confirmacao,
+                            from_="+14155238886",  # Aqui é o seu número Twilio para SMS
+                            to=numero_sms
+                        )
+                        print("Mensagem enviada por SMS como fallback.")
+                    except Exception as sms_e:
+                        print(f"Erro ao enviar SMS: {sms_e}")
 
     return {"status": "ok"}
