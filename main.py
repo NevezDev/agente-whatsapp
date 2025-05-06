@@ -75,9 +75,6 @@ def gerar_pagamento_pix(nome_produto: str, valor: float):
         "payment_method_id": "pix",
         "payer": {
             "email": "comprador@email.com"  # Pode ser genérico, obrigatório
-        },
-        "additional_info": {
-            "payer_email": "comprador@email.com"
         }
     }
 
@@ -89,6 +86,7 @@ def gerar_pagamento_pix(nome_produto: str, valor: float):
         }
     else:
         raise Exception(f"Erro ao gerar pagamento: {response.status_code} - {response.text}")
+
 
 
 @app.post("/whatsapp")
