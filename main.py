@@ -82,10 +82,11 @@ def gerar_pagamento_pix(nome_produto: str, valor: float):
     if response.status_code == 201:
         data = response.json()
         return {
-            "link": data["point_of_interaction"]["transaction_data"]["ticket_url"],  # Link do pagamento
+            "link": data["point_of_interaction"]["transaction_data"]["ticket_url"],  # Link de pagamento
         }
     else:
         raise Exception(f"Erro ao gerar pagamento: {response.status_code} - {response.text}")
+
 
 
 
