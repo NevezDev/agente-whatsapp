@@ -59,36 +59,33 @@ def enviar_pergunta_openrouter(mensagem):
 
 def gerar_pagamento_pix(nome_produto: str, valor: float):
     url = "https://api.mercadopago.com/v1/payments"
-    
-    # Gerar um UUID único para a chave de idempotência
-    idempotency_key = str(uuid.uuid4())  # Gera um valor único para a chave
-    
+    idempotency_key = str(uuid.uuid4())
+
     headers = {
         "Authorization": f"Bearer {MERCADO_PAGO_ACCESS_TOKEN}",
         "Content-Type": "application/json",
-        "X-Idempotency-Key": idempotency_key  # Passando o UUID como chave
+        "X-Idempotency-Key": idempotency_key
     }
-    
+
     body = {
         "transaction_amount": valor,
         "description": f"Compra de {nome_produto}",
         "payment_method_id": "pix",
         "payer": {
-            "email": "comprador@email.com"  # Pode ser genérico, obrigatório
+            "email": "comprador@email.com"
         }
     }
 
     response = requests.post(url, headers=headers, json=body)
-    if response.status_code == 201:
-        data = response.json()
-        return {
-            "link": data["point_of_interaction"]["transaction_data"]["ticket_url"],  # Link de pagamento
-        }
-    else:
+
+    if response.status_code != 201:
         raise Exception(f"Erro ao gerar pagamento: {response.status_code} - {response.text}")
 
-
-
+    data = response.json()
+    return {
+        "link": data["point_of_interaction"]["transaction_data"]["ticket_url"],
+        "id": data["id"]
+    }
 
 @app.post("/whatsapp")
 async def responder_mensagem(request: Request):
@@ -101,8 +98,7 @@ async def responder_mensagem(request: Request):
             for produto in produtos:
                 if produto["nome"].lower() in mensagem:
                     pagamento = gerar_pagamento_pix(produto["nome"], produto["preco"])
-                    payment_id = str(pagamento["id"])
-                    pagamentos_pendentes[payment_id] = numero
+                    pagamentos_pendentes[str(pagamento["id"])] = numero  # Salva o ID
 
                     resposta = (
                         f"✅ Pagamento gerado para *{produto['nome']}* no valor de R${produto['preco']:.2f}.\n\n"
@@ -140,7 +136,7 @@ async def webhook_mp(request: Request):
     dados = body.get("data", {})
     payment_id = str(dados.get("id"))
 
-    if tipo_evento == "payment.updated":
+    if tipo_evento == "payment.updated" and payment_id:
         mp_url = f"https://api.mercadopago.com/v1/payments/{payment_id}"
         headers = {
             "Authorization": f"Bearer {MERCADO_PAGO_ACCESS_TOKEN}"
