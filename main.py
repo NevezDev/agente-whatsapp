@@ -93,7 +93,7 @@ async def responder_mensagem(request: Request):
                 "Olá! Tudo bem? Está aqui para fazer um pedido, não é? 😊 Deseja ver o nosso cardápio delicioso?"
             )
 
-        elif any(palavra in mensagem for palavra in ["sim", "quero ver", "desejo", "ver cardápio", "ver catálogo"]):
+        elif any(palavra in mensagem for palavra in ["sim", "quero ver", "desejo", "ver cardápio", "ver catálogo", "quero", "uhum", "claro"]):
             twilio_client.messages.create(
                 media_url="https://marketplace.canva.com/EAF1LhAYvpE/2/0/900w/canva-card%C3%A1pio-bolo-doces-caseiros-moderno-rosa-instagram-story-qcdIFFP9PIw.jpg",
                 from_="whatsapp:+14155238886",
