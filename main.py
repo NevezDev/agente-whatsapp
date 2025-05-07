@@ -88,7 +88,7 @@ async def responder_mensagem(request: Request):
     try:
         resposta = ""
 
-        if mensagem in ["oi", "olá", "bom dia", "boa tarde", "boa noite"]:
+        if mensagem in ["oi", "olá", "bom dia", "boa tarde", "boa noite", "eai"]:
             resposta = (
                 "Olá! Tudo bem? Está aqui para fazer um pedido, não é? 😊 Deseja ver o nosso cardápio delicioso?"
             )
@@ -104,7 +104,7 @@ async def responder_mensagem(request: Request):
                 "Aqui está o nosso cardápio! 🍰🍬\n\n"
                 "O que você gostaria de pedir?\n\n"
                 "Para fazer um pedido, basta dizer: *quero comprar* seguido do nome do produto. Exemplo:\n"
-                "`quero comprar brigadeiro`\n"
+                "`quero comprar brigadeiro ou quero comprar um brigadeiro e 2 beijinhos`\n"
             )
 
         elif "pagar" in mensagem or "quero comprar" in mensagem:
