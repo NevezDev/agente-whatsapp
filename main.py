@@ -3,7 +3,7 @@ from twilio.rest import Client
 from twilio.twiml.messaging_response import MessagingResponse
 import os
 import requests
-from data import produtos
+from data import produtos, horario_funcionamento
 from dotenv import load_dotenv
 import uuid
 import re
@@ -19,73 +19,66 @@ MERCADO_PAGO_ACCESS_TOKEN = os.getenv("MERCADO_PAGO_ACCESS_TOKEN")
 
 CATALOGO_IMG_URL = "https://marketplace.canva.com/EAF1LhAYvpE/2/0/900w/canva-card%C3%A1pio-bolo-doces-caseiros-moderno-rosa-instagram-story-qcdIFFP9PIw.jpg"
 
-
 twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
 pagamentos_pendentes = {}
 contexto_pos_pagamento = {}
+enderecos_clientes = {}
+
+NUMERO_DONO = "whatsapp:+5575998766261"
 
 def extrair_pedidos(mensagem):
     pedidos = []
     for produto in produtos:
-        padrao = rf"(\d+)\s*{produto['nome'].lower()}"
-        match = re.search(padrao, mensagem)
-        if match:
-            quantidade = int(match.group(1))
+        if produto["nome"] in mensagem:
+            match = re.search(r"(\d+)\s*(?:x\s*)?" + re.escape(produto["nome"]), mensagem)
+            quantidade = int(match.group(1)) if match else 1
             pedidos.append((produto, quantidade))
     return pedidos
 
-def gerar_pagamento_pix_pedido(lista_pedidos):
-    descricao = ""
-    total = 0
-    for prod, qtd in lista_pedidos:
-        total += prod["preco"] * qtd
-        descricao += f"{qtd}x {prod['nome']}, "
-
-    descricao = descricao.rstrip(", ")
-
-    url = "https://api.mercadopago.com/v1/payments"
-    idempotency_key = str(uuid.uuid4())
-    headers = {
-        "Authorization": f"Bearer {MERCADO_PAGO_ACCESS_TOKEN}",
-        "Content-Type": "application/json",
-        "X-Idempotency-Key": idempotency_key
-    }
+def gerar_pagamento_pix_pedido(pedidos):
+    total = sum(produto["preco"] * qtd for produto, qtd in pedidos)
+    descricao = ", ".join([f"{qtd}x {p['nome']}" for p, qtd in pedidos])
     body = {
         "transaction_amount": total,
-        "description": f"Compra de {descricao}",
+        "description": f"Compra de doces: {descricao}",
         "payment_method_id": "pix",
-        "payer": {"email": "comprador@email.com"}
+        "payer": {
+            "email": f"comprador{uuid.uuid4().hex[:6]}@exemplo.com"
+        }
     }
-    response = requests.post(url, headers=headers, json=body)
-    if response.status_code != 201:
-        raise Exception(f"Erro ao gerar pagamento: {response.status_code} - {response.text}")
-
-    data = response.json()
-    return {
-        "link": data["point_of_interaction"]["transaction_data"]["ticket_url"],
-        "id": data["id"],
-        "total": total,
-        "descricao": descricao
+    headers = {
+        "Authorization": f"Bearer {MERCADO_PAGO_ACCESS_TOKEN}",
+        "Content-Type": "application/json"
     }
+    resposta = requests.post("https://api.mercadopago.com/v1/payments", json=body, headers=headers)
+    if resposta.status_code == 201:
+        dados = resposta.json()
+        return {
+            "id": dados["id"],
+            "link": dados["point_of_interaction"]["transaction_data"]["ticket_url"],
+            "total": total
+        }
+    else:
+        raise Exception("Erro ao gerar pagamento")
 
-def enviar_pergunta_openrouter(mensagem):
-    url = "https://openrouter.ai/api/v1/chat/completions"
+def enviar_pergunta_openrouter(prompt):
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json"
     }
-    body = {
-        "model": "opengvlab/internvl3-14b:free",
+    data = {
+        "model": "openchat/openchat-3.5",
         "messages": [
-            {"role": "user", "content": mensagem}
+            {"role": "system", "content": "Você é um assistente de vendas simpático de uma loja de doces."},
+            {"role": "user", "content": prompt}
         ]
     }
-    response = requests.post(url, json=body, headers=headers)
-    if response.status_code == 200:
-        return response.json()["choices"][0]["message"]["content"]
+    resposta = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=data)
+    if resposta.status_code == 200:
+        return resposta.json()["choices"][0]["message"]["content"]
     else:
-        raise Exception(f"Erro ao acessar OpenRouter: {response.status_code} - {response.text}")
+        return "Desculpe, algo deu errado com a IA. Tente novamente mais tarde."
 
 @app.post("/whatsapp")
 async def responder_mensagem(request: Request):
@@ -94,11 +87,15 @@ async def responder_mensagem(request: Request):
     numero = form.get("From")
 
     try:
-        if any(p in mensagem for p in ["quero comprar", "comprar"]):
+        if any(p in mensagem for p in ["horário", "funcionamento", "que horas", "abre", "fecha"]):
+            horario = "\n".join([f"{dia}: {horas}" for dia, horas in horario_funcionamento.items()])
+            resposta = f"🕒 Nosso horário de funcionamento:\n{horario}"
+
+        elif any(p in mensagem for p in ["quero comprar", "comprar"]):
             pedidos = extrair_pedidos(mensagem)
             if pedidos:
                 pagamento = gerar_pagamento_pix_pedido(pedidos)
-                pagamentos_pendentes[str(pagamento["id"])]= numero
+                pagamentos_pendentes[str(pagamento["id"])] = numero
                 lista_itens = "\n".join([f"{qtd}x {p['nome']} (R${p['preco']:.2f})" for p, qtd in pedidos])
                 resposta = (
                     f"🧾 Pedido confirmado:\n{lista_itens}\n\n"
@@ -111,23 +108,40 @@ async def responder_mensagem(request: Request):
         elif any(p in mensagem for p in ["quero ver", "ver cardápio", "ver catálogo", "sim", "desejo"]):
             twilio_client.messages.create(
                 media_url=[CATALOGO_IMG_URL],
-                body="Aqui está o nosso cardápio! 🍰🍬\n\nO que você gostaria de pedir?\n\nPara fazer um pedido, basta dizer: quero comprar seguido do nome e quantidade do produto.\nExemplo: quero comprar 1 brigadeiro e 2 beijinhos",
+                body="Aqui está o nosso cardápio! 🍰🍬\n\nO que você gostaria de pedir?\n\nPara fazer um pedido, diga: quero comprar 2 brigadeiros e 1 beijinho",
                 from_="whatsapp:+14155238886",
                 to=numero
             )
             return str(MessagingResponse())
 
-        elif numero in contexto_pos_pagamento and contexto_pos_pagamento[numero] == "aguardando_resposta_pos_pagamento":
-            if any(p in mensagem for p in ["não", "nao", "só isso", "so isso", "mais nada"]):
-                resposta = "😊 Obrigado pela preferência! Qualquer coisa, é só chamar. Tenha um ótimo dia! 🍬"
+        elif numero in contexto_pos_pagamento:
+            if contexto_pos_pagamento[numero] == "aguardando_resposta_pos_pagamento":
+                if any(p in mensagem for p in ["não", "nao", "só isso", "so isso", "mais nada"]):
+                    resposta = "😊 Obrigado pela preferência! Qualquer coisa, é só chamar. Tenha um ótimo dia! 🍬"
+                    contexto_pos_pagamento[numero] = "aguardando_endereco"
+                    twilio_client.messages.create(
+                        body="📍 Por favor, informe o endereço para entrega do pedido.",
+                        from_="whatsapp:+14155238886",
+                        to=numero
+                    )
+                else:
+                    resposta = "Certo! Pode me dizer o que mais gostaria de pedir. 🍭"
+
+            elif contexto_pos_pagamento[numero] == "aguardando_endereco":
+                enderecos_clientes[numero] = mensagem
+                resposta = "📦 Endereço recebido! Seu pedido será enviado em breve. Obrigado novamente! 🍬"
+                twilio_client.messages.create(
+                    body=f"📢 Novo pedido confirmado!\nCliente: {numero}\nEndereço: {mensagem}",
+                    from_="whatsapp:+14155238886",
+                    to=NUMERO_DONO
+                )
                 contexto_pos_pagamento.pop(numero)
-            else:
-                resposta = "Certo! Pode me dizer o que mais gostaria de pedir. 🍭"
+
         else:
             prompt = (
                 f"Você é o AtendeBot, um atendente simpático de uma loja de doces."
                 f" Ajude o cliente de forma natural com base na mensagem a seguir:\n{mensagem}"
-                f"Pergunte se o cliente deseja ver o catalogo na primeira mensagem que você mandar"
+                f" Pergunte se o cliente deseja ver o catálogo na primeira mensagem que você mandar."
             )
             resposta = enviar_pergunta_openrouter(prompt)
 
@@ -171,7 +185,6 @@ async def webhook_mp(request: Request):
                     "🎉 Pagamento confirmado! Seu pedido está sendo preparado com carinho. Obrigado! 🍬\n"
                     "Deseja mais alguma coisa? Se não, digite 'não'."
                 )
-
                 contexto_pos_pagamento[numero] = "aguardando_resposta_pos_pagamento"
 
                 try:
