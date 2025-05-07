@@ -84,7 +84,7 @@ def gerar_pagamento_pix(nome_produto: str, valor: float):
 
 def enviar_catalogo_produto_por_produto(numero):
     for produto in produtos:
-        mensagem = f"*{produto['nome']}* - R${produto['preco']:.2f}\n{produto['descricao']}\n\nDigite 'quero pagar' ou 'quero comprar {produto['nome']}' para receber o link de pagamento."
+        mensagem = f"{produto['nome']} - R${produto['preco']:.2f}\n{produto['descricao']}\n\nDigite 'quero pagar' ou 'quero comprar {produto['nome']}' para receber o link de pagamento."
         twilio_client.messages.create(
             body=mensagem,
             from_="whatsapp:+14155238886",
@@ -99,9 +99,9 @@ async def responder_mensagem(request: Request):
     numero = form.get("From")
 
     try:
-        if "catálogo" in mensagem or "produtos" in mensagem or "ver doces" in mensagem:
+        if any(palavra in mensagem for palavra in ["catálogo", "produtos", "ver doces"]):
             enviar_catalogo_produto_por_produto(numero)
-            resposta_final = "Esses são nossos produtos! 😋 Se quiser comprar, responda com 'quero pagar' ou 'quero comprar' seguido do nome do produto."
+            resposta_final = "Esses são nossos produtos! 😋 Se quiser comprar, responda com 'quero comprar' seguido do nome do produto.\n\nDeseja ver a foto de algum produto específico? Diga por exemplo: 'ver foto do brigadeiro'."
             twilio_client.messages.create(
                 body=resposta_final,
                 from_="whatsapp:+14155238886",
@@ -109,14 +109,14 @@ async def responder_mensagem(request: Request):
             )
             return str(MessagingResponse())
 
-        if "pagar" in mensagem or "quero comprar" in mensagem:
+        if any(palavra in mensagem for palavra in ["pagar", "quero comprar"]):
             for produto in produtos:
                 if produto["nome"].lower() in mensagem:
                     pagamento = gerar_pagamento_pix(produto["nome"], produto["preco"])
                     pagamentos_pendentes[str(pagamento["id"])] = numero
 
                     resposta = (
-                        f"✅ Pagamento gerado para *{produto['nome']}* no valor de R${produto['preco']:.2f}.\n\n"
+                        f"✅ Pagamento gerado para {produto['nome']} no valor de R${produto['preco']:.2f}.\n\n"
                         f"Acesse o link para pagar via Pix:\n{pagamento['link']}"
                     )
                     twilio_client.messages.create(
@@ -134,6 +134,24 @@ async def responder_mensagem(request: Request):
                 )
             return str(MessagingResponse())
 
+        if "ver foto" in mensagem:
+            for produto in produtos:
+                if produto["nome"].lower() in mensagem:
+                    twilio_client.messages.create(
+                        body=f"Aqui está a foto do {produto['nome']} 🍬",
+                        from_="whatsapp:+14155238886",
+                        to=numero,
+                        media_url=[produto["foto"]]
+                    )
+                    return str(MessagingResponse())
+            else:
+                twilio_client.messages.create(
+                    body="❌ Produto não encontrado para exibir a foto. Tente escrever exatamente o nome do doce.",
+                    from_="whatsapp:+14155238886",
+                    to=numero
+                )
+                return str(MessagingResponse())
+
         # IA responde normalmente
         prompt = gerar_prompt(mensagem)
         resposta = enviar_pergunta_openrouter(prompt)
@@ -149,7 +167,7 @@ async def responder_mensagem(request: Request):
                 mensagem_sem_links.append(linha)
 
         resposta = "\n".join(mensagem_sem_links).strip()
-        resposta += "\n\nCaso deseje comprar, responda com 'quero pagar' ou 'quero comprar NOME_DO_PRODUTO'."
+        resposta += "\n\nSe quiser ver a foto de algum produto, diga: 'ver foto do NOME_DO_PRODUTO'."
 
         if imagem_url:
             twilio_client.messages.create(
