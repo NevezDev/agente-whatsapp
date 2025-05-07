@@ -68,7 +68,7 @@ def enviar_pergunta_openrouter(prompt):
         "Content-Type": "application/json"
     }
     data = {
-        "model": "openchat/openchat-3.5",
+        "model": "opengvlab/internvl3-14b:free",
         "messages": [
             {"role": "system", "content": "Você é um assistente de vendas simpático de uma loja de doces."},
             {"role": "user", "content": prompt}
