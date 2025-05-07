@@ -11,14 +11,16 @@ load_dotenv()
 
 app = FastAPI()
 
+# Carregamento de variáveis de ambiente
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 MERCADO_PAGO_ACCESS_TOKEN = os.getenv("MERCADO_PAGO_ACCESS_TOKEN")
 
+# Instância do cliente Twilio
+twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+
 CATALOGO_IMAGEM_URL = "https://marketplace.canva.com/EAF1LhAYvpE/2/0/900w/canva-card%C3%A1pio-bolo-doces-caseiros-moderno-rosa-instagram-story-qcdIFFP9PIw.jpg"
-
-
 pagamentos_pendentes = {}
 
 INSTRUCOES = "\n\n📌 Para ver a foto de algum produto, diga: 'ver foto do NOME_DO_PRODUTO' ou apenas o nome do produto.\n📌 Para pagar, diga: 'quero comprar NOME_DO_PRODUTO'."
