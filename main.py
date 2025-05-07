@@ -62,23 +62,29 @@ def gerar_pagamento_pix_pedido(pedidos):
     else:
         raise Exception("Erro ao gerar pagamento")
 
-def enviar_pergunta_openrouter(prompt):
+def enviar_pergunta_openrouter(mensagem):
+    url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json"
     }
-    data = {
-        "model": "opengvlab/internvl3-14b:free",
+    body = {
+        "model": "openchat/openchat-3.5",
         "messages": [
-            {"role": "system", "content": "Você é um assistente de vendas simpático de uma loja de doces."},
-            {"role": "user", "content": prompt}
+            {"role": "user", "content": mensagem}
         ]
     }
-    resposta = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=data)
-    if resposta.status_code == 200:
-        return resposta.json()["choices"][0]["message"]["content"]
-    else:
-        return "Desculpe, algo deu errado com a IA. Tente novamente mais tarde."
+    try:
+        response = requests.post(url, json=body, headers=headers)
+        if response.status_code == 200:
+            return response.json()["choices"][0]["message"]["content"]
+        else:
+            # Se a resposta não for 200, enviar o erro para o cliente
+            return f"Desculpe, algo deu errado com a IA. Tente novamente mais tarde. Detalhes do erro: {response.status_code} - {response.text}"
+    except Exception as e:
+        # Se ocorrer um erro ao tentar acessar a OpenRouter
+        return f"Desculpe, algo deu errado com a IA. Tente novamente mais tarde. Detalhes do erro: {str(e)}"
+
 
 @app.post("/whatsapp")
 async def responder_mensagem(request: Request):
