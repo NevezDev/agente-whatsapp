@@ -18,25 +18,20 @@ MERCADO_PAGO_ACCESS_TOKEN = os.getenv("MERCADO_PAGO_ACCESS_TOKEN")
 
 twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
-# Dicionário para guardar pagamentos pendentes
 pagamentos_pendentes = {}
 
-def gerar_catalogo():
-    catalogo = ""
-    for p in produtos:
-        catalogo += f"*{p['nome']}* - R${p['preco']:.2f}: {p['descricao']}\n{p['foto']}\n\n"
-    return catalogo.strip()
-
 def gerar_prompt(mensagem_cliente):
-    catalogo = gerar_catalogo()
+    catalogo_textual = ""
+    for p in produtos:
+        catalogo_textual += f"{p['nome']} - R${p['preco']:.2f}: {p['descricao']}\n"
+
     return (
         f"Você é o AtendeBot, um atendente simpático de uma loja de doces. "
-        f"Seu objetivo é ajudar os clientes a escolherem produtos e responder dúvidas com simpatia, mas sem dizer 'olá'. "
-        f"Sempre inclua o link da imagem do produto em uma linha separada após a descrição.\n\n"
-        f"Catálogo:\n{catalogo}\n\n"
+        f"Seu objetivo é ajudar os clientes a escolherem produtos e responder dúvidas com simpatia.\n\n"
+        f"Catálogo resumido:\n{catalogo_textual}\n\n"
         f"Mensagem do cliente: {mensagem_cliente}\n"
         f"Responda de forma natural e útil. "
-        f"Se o cliente desejar pagar, diga: 'Pagamento iniciado para o produto NOME. Por favor, aguarde o link para pagamento.'"
+        f"Se o cliente quiser pagar, diga: 'Pagamento iniciado para o produto NOME. Por favor, aguarde o link para pagamento.'"
     )
 
 def enviar_pergunta_openrouter(mensagem):
@@ -46,7 +41,7 @@ def enviar_pergunta_openrouter(mensagem):
         "Content-Type": "application/json"
     }
     body = {
-        "model": "opengvlab/internvl3-14b:free",
+        "model": "openchat/openchat-3.5",
         "messages": [
             {"role": "user", "content": mensagem}
         ]
@@ -78,7 +73,6 @@ def gerar_pagamento_pix(nome_produto: str, valor: float):
     }
 
     response = requests.post(url, headers=headers, json=body)
-
     if response.status_code != 201:
         raise Exception(f"Erro ao gerar pagamento: {response.status_code} - {response.text}")
 
@@ -88,6 +82,16 @@ def gerar_pagamento_pix(nome_produto: str, valor: float):
         "id": data["id"]
     }
 
+def enviar_catalogo_produto_por_produto(numero):
+    for produto in produtos:
+        mensagem = f"*{produto['nome']}* - R${produto['preco']:.2f}\n{produto['descricao']}\n\nDigite 'quero pagar' ou 'quero comprar {produto['nome']}' para receber o link de pagamento."
+        twilio_client.messages.create(
+            body=mensagem,
+            from_="whatsapp:+14155238886",
+            to=numero,
+            media_url=[produto['foto']]
+        )
+
 @app.post("/whatsapp")
 async def responder_mensagem(request: Request):
     form = await request.form()
@@ -95,6 +99,16 @@ async def responder_mensagem(request: Request):
     numero = form.get("From")
 
     try:
+        if "catálogo" in mensagem or "produtos" in mensagem or "ver doces" in mensagem:
+            enviar_catalogo_produto_por_produto(numero)
+            resposta_final = "Esses são nossos produtos! 😋 Se quiser comprar, responda com 'quero pagar' ou 'quero comprar' seguido do nome do produto."
+            twilio_client.messages.create(
+                body=resposta_final,
+                from_="whatsapp:+14155238886",
+                to=numero
+            )
+            return str(MessagingResponse())
+
         if "pagar" in mensagem or "quero comprar" in mensagem:
             for produto in produtos:
                 if produto["nome"].lower() in mensagem:
@@ -105,29 +119,38 @@ async def responder_mensagem(request: Request):
                         f"✅ Pagamento gerado para *{produto['nome']}* no valor de R${produto['preco']:.2f}.\n\n"
                         f"Acesse o link para pagar via Pix:\n{pagamento['link']}"
                     )
-                    imagem_url = produto["foto"]
+                    twilio_client.messages.create(
+                        body=resposta,
+                        from_="whatsapp:+14155238886",
+                        to=numero,
+                        media_url=[produto["foto"]]
+                    )
                     break
             else:
-                resposta = "❌ Desculpe, não encontrei esse produto para gerar o pagamento."
-                imagem_url = None
-        else:
-            prompt = gerar_prompt(mensagem)
-            resposta = enviar_pergunta_openrouter(prompt)
+                twilio_client.messages.create(
+                    body="❌ Desculpe, não encontrei esse produto para gerar o pagamento.",
+                    from_="whatsapp:+14155238886",
+                    to=numero
+                )
+            return str(MessagingResponse())
 
-            # Extrai imagem da resposta
-            linhas = resposta.splitlines()
-            mensagem_sem_links = []
-            imagem_url = None
+        # IA responde normalmente
+        prompt = gerar_prompt(mensagem)
+        resposta = enviar_pergunta_openrouter(prompt)
 
-            for linha in linhas:
-                if linha.strip().startswith("http") and ("png" in linha or "jpg" in linha or "jpeg" in linha):
-                    imagem_url = linha.strip()
-                else:
-                    mensagem_sem_links.append(linha)
+        # Extrai imagem da resposta (se houver)
+        linhas = resposta.splitlines()
+        mensagem_sem_links = []
+        imagem_url = None
+        for linha in linhas:
+            if linha.strip().startswith("http") and ("png" in linha or "jpg" in linha or "jpeg" in linha):
+                imagem_url = linha.strip()
+            else:
+                mensagem_sem_links.append(linha)
 
-            resposta = "\n".join(mensagem_sem_links).strip()
+        resposta = "\n".join(mensagem_sem_links).strip()
+        resposta += "\n\nCaso deseje comprar, responda com 'quero pagar' ou 'quero comprar NOME_DO_PRODUTO'."
 
-        # Envia a resposta via WhatsApp (com imagem se houver)
         if imagem_url:
             twilio_client.messages.create(
                 body=resposta,
