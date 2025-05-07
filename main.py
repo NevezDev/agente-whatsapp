@@ -86,6 +86,7 @@ def enviar_pergunta_openrouter(mensagem):
         raise Exception(f"Erro ao acessar OpenRouter: {response.status_code} - {response.text}")
 
 @app.post("/whatsapp")
+@app.post("/whatsapp")
 async def responder_mensagem(request: Request):
     form = await request.form()
     mensagem = form.get("Body").lower()
@@ -97,7 +98,7 @@ async def responder_mensagem(request: Request):
             if pedidos:
                 pagamento = gerar_pagamento_pix_pedido(pedidos)
                 pagamentos_pendentes[str(pagamento["id"])]= numero
-                lista_itens = "\n".join([f"{qtd}x {p['nome']} (R${p['preco']:.2f})" for p, qtd in pedidos])
+                lista_itens = "\n".join([f"{qtd} x {p['nome']} (R${p['preco']:.2f})" for p, qtd in pedidos])
                 resposta = (
                     f"🧾 Pedido confirmado:\n{lista_itens}\n\n"
                     f"💰 Total: R${pagamento['total']:.2f}\n"
@@ -106,28 +107,40 @@ async def responder_mensagem(request: Request):
             else:
                 resposta = "❌ Não encontrei os produtos mencionados no nosso catálogo. Por favor, verifique os nomes."
 
-        elif any(p in mensagem for p in ["quero ver", "ver cardápio", "ver catálogo", "sim", "desejo"]):
-            twilio_client.messages.create(
-                media_url=[CATALOGO_IMG_URL],
-                body="Aqui está o nosso cardápio! 🍰🍬\n\nO que você gostaria de pedir?\n\nPara fazer um pedido, basta dizer: quero comprar seguido do nome e quantidade do produto.\nExemplo: quero comprar 1 brigadeiro e 2 beijinhos",
-                from_="whatsapp:+14155238886",
-                to=numero
-            )
-            return str(MessagingResponse())
-
-        elif numero in contexto_pos_pagamento and contexto_pos_pagamento[numero] == "aguardando_resposta_pos_pagamento":
-            if any(p in mensagem for p in ["não", "nao", "só isso", "so isso", "mais nada"]):
-                resposta = "😊 Obrigado pela preferência! Qualquer coisa, é só chamar. Tenha um ótimo dia! 🍬"
-                contexto_pos_pagamento.pop(numero)
-            else:
-                resposta = "Certo! Pode me dizer o que mais gostaria de pedir. 🍭"
-        
         elif numero in contexto_pos_pagamento and contexto_pos_pagamento[numero] == "aguardando_endereco":
             # Pergunta o endereço do cliente
             resposta = "🗺️ Por favor, informe o seu endereço para entrega."
             contexto_pos_pagamento[numero] = "aguardando_resposta_endereco"
+        
+        elif numero in contexto_pos_pagamento and contexto_pos_pagamento[numero] == "aguardando_resposta_endereco":
+            endereco = mensagem.strip()
+            # Enviar confirmação do endereço e aviso ao dono da loja
+            resposta = (
+                f"🛍️ Pedido finalizado! Seu endereço é: {endereco}. O dono da loja foi notificado."
+            )
+            contexto_pos_pagamento[numero] = "pedido_finalizado"
+
+            # Enviar confirmação para o cliente
+            twilio_client.messages.create(
+                body=resposta,
+                from_="whatsapp:+14155238886",
+                to=numero
+            )
+
+            # Avisar ao dono da loja via WhatsApp
+            mensagem_dono = (
+                f"Novo pedido recebido!\n\nEndereço para entrega: {endereco}\n\nCliente: {numero}\n"
+                "Por favor, prepare o pedido."
+            )
+
+            twilio_client.messages.create(
+                body=mensagem_dono,
+                from_="whatsapp:+14155238886",
+                to="+55 75 99876-6261"  # Número de WhatsApp do dono da loja
+            )
 
         else:
+            # Se não está esperando nada específico, o bot pode fazer uma pergunta inicial
             prompt = (
                 f"Você é o AtendeBot, um atendente simpático de uma loja de doces."
                 f" Ajude o cliente de forma natural com base na mensagem a seguir:\n{mensagem}"
