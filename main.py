@@ -90,7 +90,7 @@ async def responder_mensagem(request: Request):
 
         if mensagem in ["oi", "olá", "bom dia", "boa tarde", "boa noite"]:
             resposta = (
-                "Olá! 😊 Deseja ver o nosso cardápio delicioso? Responda com 'sim' para receber a imagem com os nossos doces e preços!"
+                "Olá! Tudo bem? Está aqui para fazer um pedido, não é? 😊 Deseja ver o nosso cardápio delicioso?"
             )
 
         elif any(palavra in mensagem for palavra in ["sim", "quero ver", "desejo", "ver cardápio", "ver catálogo"]):
