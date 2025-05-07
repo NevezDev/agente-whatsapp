@@ -20,6 +20,8 @@ twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
 pagamentos_pendentes = {}
 
+INSTRUCOES = "\n\n📌 Para ver a foto de algum produto, diga: 'ver foto do NOME_DO_PRODUTO' ou apenas o nome do produto.\n📌 Para pagar, diga: 'quero comprar NOME_DO_PRODUTO'."
+
 def gerar_prompt(mensagem_cliente):
     catalogo_textual = ""
     for p in produtos:
@@ -84,7 +86,7 @@ def gerar_pagamento_pix(nome_produto: str, valor: float):
 
 def enviar_catalogo_produto_por_produto(numero):
     for produto in produtos:
-        mensagem = f"{produto['nome']} - R${produto['preco']:.2f}\n{produto['descricao']}\n\nDigite 'quero pagar' ou 'quero comprar {produto['nome']}' para receber o link de pagamento."
+        mensagem = f"{produto['nome']} - R${produto['preco']:.2f}\n{produto['descricao']}" + INSTRUCOES
         twilio_client.messages.create(
             body=mensagem,
             from_="whatsapp:+14155238886",
@@ -101,7 +103,7 @@ async def responder_mensagem(request: Request):
     try:
         if any(palavra in mensagem for palavra in ["catálogo", "produtos", "ver doces"]):
             enviar_catalogo_produto_por_produto(numero)
-            resposta_final = "Esses são nossos produtos! 😋 Se quiser comprar, responda com 'quero comprar' seguido do nome do produto.\n\nDeseja ver a foto de algum produto específico? Diga por exemplo: 'ver foto do brigadeiro'."
+            resposta_final = "Esses são nossos produtos! 😋" + INSTRUCOES
             twilio_client.messages.create(
                 body=resposta_final,
                 from_="whatsapp:+14155238886",
@@ -118,27 +120,9 @@ async def responder_mensagem(request: Request):
                     resposta = (
                         f"✅ Pagamento gerado para {produto['nome']} no valor de R${produto['preco']:.2f}.\n\n"
                         f"Acesse o link para pagar via Pix:\n{pagamento['link']}"
-                    )
+                    ) + INSTRUCOES
                     twilio_client.messages.create(
                         body=resposta,
-                        from_="whatsapp:+14155238886",
-                        to=numero,
-                        media_url=[produto["foto"]]
-                    )
-                    break
-            else:
-                twilio_client.messages.create(
-                    body="❌ Desculpe, não encontrei esse produto para gerar o pagamento.",
-                    from_="whatsapp:+14155238886",
-                    to=numero
-                )
-            return str(MessagingResponse())
-
-        if "ver foto" in mensagem:
-            for produto in produtos:
-                if produto["nome"].lower() in mensagem:
-                    twilio_client.messages.create(
-                        body=f"Aqui está a foto do {produto['nome']} 🍬",
                         from_="whatsapp:+14155238886",
                         to=numero,
                         media_url=[produto["foto"]]
@@ -146,7 +130,25 @@ async def responder_mensagem(request: Request):
                     return str(MessagingResponse())
             else:
                 twilio_client.messages.create(
-                    body="❌ Produto não encontrado para exibir a foto. Tente escrever exatamente o nome do doce.",
+                    body="❌ Desculpe, não encontrei esse produto para gerar o pagamento." + INSTRUCOES,
+                    from_="whatsapp:+14155238886",
+                    to=numero
+                )
+                return str(MessagingResponse())
+
+        if "ver foto" in mensagem or any(produto["nome"].lower() in mensagem for produto in produtos):
+            for produto in produtos:
+                if produto["nome"].lower() in mensagem:
+                    twilio_client.messages.create(
+                        body=f"📷 Aqui está a foto do {produto['nome']}!" + INSTRUCOES,
+                        from_="whatsapp:+14155238886",
+                        to=numero,
+                        media_url=[produto["foto"]]
+                    )
+                    return str(MessagingResponse())
+            else:
+                twilio_client.messages.create(
+                    body="❌ Produto não encontrado para exibir a foto. Tente escrever exatamente o nome do doce." + INSTRUCOES,
                     from_="whatsapp:+14155238886",
                     to=numero
                 )
@@ -156,7 +158,6 @@ async def responder_mensagem(request: Request):
         prompt = gerar_prompt(mensagem)
         resposta = enviar_pergunta_openrouter(prompt)
 
-        # Extrai imagem da resposta (se houver)
         linhas = resposta.splitlines()
         mensagem_sem_links = []
         imagem_url = None
@@ -166,8 +167,7 @@ async def responder_mensagem(request: Request):
             else:
                 mensagem_sem_links.append(linha)
 
-        resposta = "\n".join(mensagem_sem_links).strip()
-        resposta += "\n\nSe quiser ver a foto de algum produto, diga: 'ver foto do NOME_DO_PRODUTO'."
+        resposta = "\n".join(mensagem_sem_links).strip() + INSTRUCOES
 
         if imagem_url:
             twilio_client.messages.create(
@@ -184,7 +184,7 @@ async def responder_mensagem(request: Request):
             )
 
     except Exception as e:
-        erro = f"Erro ao processar: {e}"
+        erro = f"Erro ao processar: {e}" + INSTRUCOES
         twilio_client.messages.create(
             body=erro,
             from_="whatsapp:+14155238886",
