@@ -41,7 +41,7 @@ def enviar_pergunta_openrouter(mensagem):
         "Content-Type": "application/json"
     }
     body = {
-        "model": "openchat/openchat-3.5",
+        "model": "opengvlab/internvl3-14b:free",
         "messages": [
             {"role": "user", "content": mensagem}
         ]
