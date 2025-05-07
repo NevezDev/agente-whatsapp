@@ -19,10 +19,14 @@ MERCADO_PAGO_ACCESS_TOKEN = os.getenv("MERCADO_PAGO_ACCESS_TOKEN")
 
 CATALOGO_IMG_URL = "https://marketplace.canva.com/EAF1LhAYvpE/2/0/900w/canva-card%C3%A1pio-bolo-doces-caseiros-moderno-rosa-instagram-story-qcdIFFP9PIw.jpg"
 
+DONO_NUMERO = "whatsapp:+5575998766261"
+
 twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
 pagamentos_pendentes = {}
 contexto_pos_pagamento = {}
+enderecos_clientes = {}
+atendimentos_encerrados = set()
 
 def extrair_pedidos(mensagem):
     pedidos = []
@@ -40,6 +44,7 @@ def gerar_pagamento_pix_pedido(lista_pedidos):
     for prod, qtd in lista_pedidos:
         total += prod["preco"] * qtd
         descricao += f"{qtd}x {prod['nome']}, "
+
     descricao = descricao.rstrip(", ")
 
     url = "https://api.mercadopago.com/v1/payments"
@@ -86,11 +91,13 @@ def enviar_pergunta_openrouter(mensagem):
         raise Exception(f"Erro ao acessar OpenRouter: {response.status_code} - {response.text}")
 
 @app.post("/whatsapp")
-@app.post("/whatsapp")
 async def responder_mensagem(request: Request):
     form = await request.form()
     mensagem = form.get("Body").lower()
     numero = form.get("From")
+
+    if numero in atendimentos_encerrados:
+        return str(MessagingResponse())
 
     try:
         if any(p in mensagem for p in ["quero comprar", "comprar"]):
@@ -98,7 +105,7 @@ async def responder_mensagem(request: Request):
             if pedidos:
                 pagamento = gerar_pagamento_pix_pedido(pedidos)
                 pagamentos_pendentes[str(pagamento["id"])]= numero
-                lista_itens = "\n".join([f"{qtd} x {p['nome']} (R${p['preco']:.2f})" for p, qtd in pedidos])
+                lista_itens = "\n".join([f"{qtd}x {p['nome']} (R${p['preco']:.2f})" for p, qtd in pedidos])
                 resposta = (
                     f"🧾 Pedido confirmado:\n{lista_itens}\n\n"
                     f"💰 Total: R${pagamento['total']:.2f}\n"
@@ -107,40 +114,31 @@ async def responder_mensagem(request: Request):
             else:
                 resposta = "❌ Não encontrei os produtos mencionados no nosso catálogo. Por favor, verifique os nomes."
 
-        elif numero in contexto_pos_pagamento and contexto_pos_pagamento[numero] == "aguardando_endereco":
-            # Pergunta o endereço do cliente
-            resposta = "🗺️ Por favor, informe o seu endereço para entrega."
-            contexto_pos_pagamento[numero] = "aguardando_resposta_endereco"
-        
-        elif numero in contexto_pos_pagamento and contexto_pos_pagamento[numero] == "aguardando_resposta_endereco":
-            endereco = mensagem.strip()
-            # Enviar confirmação do endereço e aviso ao dono da loja
-            resposta = (
-                f"🛍️ Pedido finalizado! Seu endereço é: {endereco}. O dono da loja foi notificado."
-            )
-            contexto_pos_pagamento[numero] = "pedido_finalizado"
-
-            # Enviar confirmação para o cliente
+        elif any(p in mensagem for p in ["quero ver", "ver cardápio", "ver catálogo", "sim", "desejo"]):
             twilio_client.messages.create(
-                body=resposta,
+                media_url=[CATALOGO_IMG_URL],
+                body="Aqui está o nosso cardápio! 🍰🍬\n\nO que você gostaria de pedir?\n\nPara fazer um pedido, basta dizer: quero comprar seguido do nome e quantidade do produto.\nExemplo: quero comprar 1 brigadeiro e 2 beijinhos",
                 from_="whatsapp:+14155238886",
                 to=numero
             )
+            return str(MessagingResponse())
 
-            # Avisar ao dono da loja via WhatsApp
-            mensagem_dono = (
-                f"Novo pedido recebido!\n\nEndereço para entrega: {endereco}\n\nCliente: {numero}\n"
-                "Por favor, prepare o pedido."
-            )
+        elif numero in contexto_pos_pagamento:
+            estado = contexto_pos_pagamento[numero]
+            if estado == "aguardando_resposta_pos_pagamento":
+                if any(p in mensagem for p in ["não", "nao", "só isso", "so isso", "mais nada"]):
+                    resposta = "😊 Obrigado pela preferência! Qualquer coisa, é só chamar. Tenha um ótimo dia! 🍬"
+                    contexto_pos_pagamento.pop(numero)
+                    atendimentos_encerrados.add(numero)
+                else:
+                    resposta = "Certo! Pode me dizer o que mais gostaria de pedir. 🍭"
 
-            twilio_client.messages.create(
-                body=mensagem_dono,
-                from_="whatsapp:+14155238886",
-                to="+55 75 99876-6261"  # Número de WhatsApp do dono da loja
-            )
+            elif estado == "aguardando_endereco":
+                enderecos_clientes[numero] = mensagem
+                resposta = "Anotamos o seu pedido e daqui a pouco estará saindo para entrega. 🚚\nDeseja mais alguma coisa?"
+                contexto_pos_pagamento[numero] = "aguardando_resposta_pos_pagamento"
 
         else:
-            # Se não está esperando nada específico, o bot pode fazer uma pergunta inicial
             prompt = (
                 f"Você é o AtendeBot, um atendente simpático de uma loja de doces."
                 f" Ajude o cliente de forma natural com base na mensagem a seguir:\n{mensagem}"
@@ -184,9 +182,10 @@ async def webhook_mp(request: Request):
 
             if status == "approved" and payment_id in pagamentos_pendentes:
                 numero = pagamentos_pendentes.pop(payment_id)
+
                 mensagem_confirmacao = (
                     "🎉 Pagamento confirmado! Seu pedido está sendo preparado com carinho. Obrigado! 🍬\n"
-                    "Agora, por favor, me envie seu endereço para entrega."
+                    "Antes de finalizarmos, por favor, informe seu endereço para entrega. 🏠"
                 )
 
                 contexto_pos_pagamento[numero] = "aguardando_endereco"
@@ -196,6 +195,12 @@ async def webhook_mp(request: Request):
                         body=mensagem_confirmacao,
                         from_="whatsapp:+14155238886",
                         to=numero
+                    )
+
+                    twilio_client.messages.create(
+                        body=f"🚨 Novo pedido confirmado! Número do cliente: {numero}",
+                        from_="whatsapp:+14155238886",
+                        to=DONO_NUMERO
                     )
                 except Exception as e:
                     numero_sms = numero.replace("whatsapp:", "")
@@ -209,38 +214,3 @@ async def webhook_mp(request: Request):
                         print(f"Erro ao enviar SMS: {sms_e}")
 
     return {"status": "ok"}
-
-@app.post("/receber_endereco")
-async def receber_endereco(request: Request):
-    form = await request.form()
-    numero = form.get("From")
-    endereco = form.get("Body")
-
-    if numero in contexto_pos_pagamento and contexto_pos_pagamento[numero] == "aguardando_resposta_endereco":
-        contexto_pos_pagamento[numero] = "pedido_finalizado"
-
-        # Enviar confirmação do endereço e aviso ao dono da loja
-        mensagem_endereco = (
-            f"Endereço de entrega: {endereco}\n\n"
-            "Agora que seu pedido está finalizado, o dono da loja será notificado."
-        )
-
-        twilio_client.messages.create(
-            body=mensagem_endereco,
-            from_="whatsapp:+14155238886",
-            to=numero
-        )
-
-        # Avisar ao dono da loja
-        mensagem_dono = (
-            f"Novo pedido recebido!\n\nEndereço: {endereco}\n\nCliente: {numero}\n"
-            "Por favor, prepare o pedido."
-        )
-
-        twilio_client.messages.create(
-            body=mensagem_dono,
-            from_="whatsapp:+14155238886",
-            to="whatsapp:+5575998766261"
-        )
-
-        return {"status": "ok"}
