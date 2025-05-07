@@ -16,11 +16,13 @@ TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 MERCADO_PAGO_ACCESS_TOKEN = os.getenv("MERCADO_PAGO_ACCESS_TOKEN")
 
-twilio_client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+CATALOGO_IMAGEM_URL = "https://marketplace.canva.com/EAF1LhAYvpE/2/0/900w/canva-card%C3%A1pio-bolo-doces-caseiros-moderno-rosa-instagram-story-qcdIFFP9PIw.jpg"
+
 
 pagamentos_pendentes = {}
 
 INSTRUCOES = "\n\n📌 Para ver a foto de algum produto, diga: 'ver foto do NOME_DO_PRODUTO' ou apenas o nome do produto.\n📌 Para pagar, diga: 'quero comprar NOME_DO_PRODUTO'."
+
 
 def gerar_prompt(mensagem_cliente):
     catalogo_textual = ""
@@ -35,6 +37,7 @@ def gerar_prompt(mensagem_cliente):
         f"Responda de forma natural e útil. "
         f"Se o cliente quiser pagar, diga: 'Pagamento iniciado para o produto NOME. Por favor, aguarde o link para pagamento.'"
     )
+
 
 def enviar_pergunta_openrouter(mensagem):
     url = "https://openrouter.ai/api/v1/chat/completions"
@@ -54,6 +57,7 @@ def enviar_pergunta_openrouter(mensagem):
         return response.json()["choices"][0]["message"]["content"]
     else:
         raise Exception(f"Erro ao acessar OpenRouter: {response.status_code} - {response.text}")
+
 
 def gerar_pagamento_pix(nome_produto: str, valor: float):
     url = "https://api.mercadopago.com/v1/payments"
@@ -84,15 +88,15 @@ def gerar_pagamento_pix(nome_produto: str, valor: float):
         "id": data["id"]
     }
 
-def enviar_catalogo_produto_por_produto(numero):
-    for produto in produtos:
-        mensagem = f"{produto['nome']} - R${produto['preco']:.2f}\n{produto['descricao']}" + INSTRUCOES
-        twilio_client.messages.create(
-            body=mensagem,
-            from_="whatsapp:+14155238886",
-            to=numero,
-            media_url=[produto['foto']]
-        )
+
+def enviar_catalogo_imagem(numero):
+    twilio_client.messages.create(
+        body="🍬 Aqui está nosso catálogo! Veja todos os nossos doces disponíveis.\n\nCaso queira comprar algo, diga: 'quero comprar NOME_DO_PRODUTO'.\nSe quiser mais de um produto, digite todos os nomes juntos!",
+        from_="whatsapp:+14155238886",
+        to=numero,
+        media_url=[CATALOGO_IMAGEM_URL]
+    )
+
 
 @app.post("/whatsapp")
 async def responder_mensagem(request: Request):
@@ -101,40 +105,36 @@ async def responder_mensagem(request: Request):
     numero = form.get("From")
 
     try:
-        if any(palavra in mensagem for palavra in ["catálogo", "produtos", "ver doces"]):
-            enviar_catalogo_produto_por_produto(numero)
-            resposta_final = "Esses são nossos produtos! 😋" + INSTRUCOES
-            twilio_client.messages.create(
-                body=resposta_final,
-                from_="whatsapp:+14155238886",
-                to=numero
-            )
+        if any(palavra in mensagem for palavra in ["catálogo", "produtos", "ver doces", "ver catálogo"]):
+            enviar_catalogo_imagem(numero)
             return str(MessagingResponse())
 
         if any(palavra in mensagem for palavra in ["pagar", "quero comprar"]):
-            for produto in produtos:
-                if produto["nome"].lower() in mensagem:
-                    pagamento = gerar_pagamento_pix(produto["nome"], produto["preco"])
-                    pagamentos_pendentes[str(pagamento["id"])] = numero
-
-                    resposta = (
-                        f"✅ Pagamento gerado para {produto['nome']} no valor de R${produto['preco']:.2f}.\n\n"
-                        f"Acesse o link para pagar via Pix:\n{pagamento['link']}"
-                    ) + INSTRUCOES
-                    twilio_client.messages.create(
-                        body=resposta,
-                        from_="whatsapp:+14155238886",
-                        to=numero,
-                        media_url=[produto["foto"]]
-                    )
-                    return str(MessagingResponse())
-            else:
+            produtos_encontrados = [p for p in produtos if p["nome"].lower() in mensagem]
+            if not produtos_encontrados:
                 twilio_client.messages.create(
-                    body="❌ Desculpe, não encontrei esse produto para gerar o pagamento." + INSTRUCOES,
+                    body="❌ Desculpe, não encontrei os produtos mencionados." + INSTRUCOES,
                     from_="whatsapp:+14155238886",
                     to=numero
                 )
                 return str(MessagingResponse())
+
+            total = sum(p["preco"] for p in produtos_encontrados)
+            descricao = ", ".join(p["nome"] for p in produtos_encontrados)
+
+            pagamento = gerar_pagamento_pix(descricao, total)
+            pagamentos_pendentes[str(pagamento["id"])] = numero
+
+            resposta = (
+                f"✅ Pagamento gerado para: {descricao}\nTotal: R${total:.2f}\n\n"
+                f"Acesse o link para pagar via Pix:\n{pagamento['link']}\n\nDeseja mais alguma coisa?"
+            )
+            twilio_client.messages.create(
+                body=resposta,
+                from_="whatsapp:+14155238886",
+                to=numero
+            )
+            return str(MessagingResponse())
 
         if "ver foto" in mensagem or any(produto["nome"].lower() in mensagem for produto in produtos):
             for produto in produtos:
@@ -146,13 +146,14 @@ async def responder_mensagem(request: Request):
                         media_url=[produto["foto"]]
                     )
                     return str(MessagingResponse())
-            else:
-                twilio_client.messages.create(
-                    body="❌ Produto não encontrado para exibir a foto. Tente escrever exatamente o nome do doce." + INSTRUCOES,
-                    from_="whatsapp:+14155238886",
-                    to=numero
-                )
-                return str(MessagingResponse())
+
+        if any(palavra in mensagem for palavra in ["não", "nada", "obrigado", "obrigada"]):
+            twilio_client.messages.create(
+                body="🙏 Agradecemos a preferência! Volte sempre que quiser mais docinhos! 🍭",
+                from_="whatsapp:+14155238886",
+                to=numero
+            )
+            return str(MessagingResponse())
 
         # IA responde normalmente
         prompt = gerar_prompt(mensagem)
@@ -194,6 +195,7 @@ async def responder_mensagem(request: Request):
     twiml = MessagingResponse()
     twiml.message("Processando sua mensagem...")
     return str(twiml)
+
 
 @app.post("/webhook")
 async def webhook_mp(request: Request):
