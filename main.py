@@ -143,7 +143,6 @@ async def responder_mensagem(request: Request):
                 f"Você é o AtendeBot, um atendente simpático de uma loja de doces."
                 f" Ajude o cliente de forma natural com base na mensagem a seguir:\n{mensagem}"
                 f"Pergunte se o cliente deseja ver o catalogo na primeira mensagem que você mandar"
-                f"Caso o cliente expresse a vontade de encerrar o atendimento, apenas se despeça de forma educada"
             )
             resposta = enviar_pergunta_openrouter(prompt)
 
